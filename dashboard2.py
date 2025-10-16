@@ -12,6 +12,7 @@ from streamlit.runtime.scriptrunner import add_script_run_ctx
 st.set_page_config(layout="wide")
 
 CONFIG_FILE = "config.json"
+LOGO_URL = "https://github.com/WRSouza93/dashboard-manutencao/blob/main/Translek.png?raw=true"
 
 # --- Funções de Gerenciamento de Configuração ---
 def load_config():
@@ -179,7 +180,11 @@ def classify_os_status(row):
 
 # --- Funções de Renderização de Página ---
 def render_dashboard_page():
-    st.title("DASHBOARD DE MANUTENÇÃO TRANSLEK")
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.title("DASHBOARD DE MANUTENÇÃO TRANSLEK")
+    with col2:
+        st.image(LOGO_URL, width=200)
 
     st.sidebar.header("Filtros")
     col1_sidebar, col2_sidebar = st.sidebar.columns(2)
@@ -404,7 +409,11 @@ def render_dashboard_page():
         st.error(f"Ocorreu um erro ao processar os dados da API: {e}")
 
 def render_andamento_page():
-    st.title("ORDENS DE SERVIÇO EM ANDAMENTO")
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.title("ORDENS DE SERVIÇO EM ANDAMENTO")
+    with col2:
+        st.image(LOGO_URL, width=200)
 
     # Verifica se há dados carregados
     if not st.session_state.api_data:
@@ -443,7 +452,11 @@ def render_andamento_page():
         st.error(f"Ocorreu um erro ao processar os dados: {e}")
 
 def render_settings_page():
-    st.title("CONFIGURAÇÕES DA API E AGENDAMENTO")
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.title("CONFIGURAÇÕES DA API E AGENDAMENTO")
+    with col2:
+        st.image(LOGO_URL, width=200)
 
     # Informação sobre configuração
     st.info("📁 Login e senha devem ser configurados no arquivo config.json")
@@ -515,6 +528,9 @@ def render_settings_page():
 
 # --- Ponto de Entrada Principal ---
 def main():
+    # Logo na sidebar
+    st.sidebar.image(LOGO_URL)
+
     # Usando st.Page corretamente
     dashboard_page = st.Page(render_dashboard_page, title="Dashboard", icon="📊")
     andamento_page = st.Page(render_andamento_page, title="OS em Andamento", icon="⏳")

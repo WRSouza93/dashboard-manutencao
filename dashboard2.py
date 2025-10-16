@@ -14,21 +14,22 @@ st.set_page_config(layout="wide")
 CONFIG_FILE = "config.json"
 
 # --- Funções de Gerenciamento de Configuração ---
+
 def load_config():
     """Carrega as configurações do arquivo JSON se ele existir."""
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, 'r') as f:
             config = json.load(f)
-        # Garante que a nova chave exista
-        if 'logo_url' not in config:
-            config['logo_url'] = ''
-        return config
+            # Garante que a nova chave exista
+            if 'logo_url' not in config:
+                config['logo_url'] = 'https://github.com/WRSouza93/dashboard-manutencao/blob/main/Translek.png?raw=true'
+            return config
     return {
         'login': '',
         'password': '',
         'save_path': r'C:\Users\wesle\OneDrive\Documentos\Documents\Dados Translek',
         'interval': 5,
-        'logo_url': ''
+        'logo_url': 'https://github.com/WRSouza93/dashboard-manutencao/blob/main/Translek.png?raw=true'
     }
 
 def save_config():
@@ -54,7 +55,9 @@ if 'editing_config' not in st.session_state:
     # Inicia no modo de edição se o login não estiver configurado
     st.session_state.editing_config = not st.session_state.config.get('login')
 
+
 # --- Funções de Lógica de Negócio (API e Dados) ---
+
 def _get_token(login, password, log_callback):
     """Obtém o token de autenticação da API."""
     try:
@@ -197,7 +200,6 @@ def render_dashboard_page():
             st.cache_data.clear()
             log_placeholder.empty()
             st.rerun()
-
     with col2_sidebar:
         if st.button("Limpar Filtros"):
             keys_to_keep = ['config', 'scheduler_running', 'scheduler_thread', 'last_update', 'update_log', 'next_update_time']
@@ -239,6 +241,7 @@ def render_dashboard_page():
             if situacao_selecionada: df_filtered = df_filtered[df_filtered['Situação da OS'].isin(situacao_selecionada)]
             if motorista_selecionado: df_filtered = df_filtered[df_filtered['motoristaresponsavel'].isin(motorista_selecionado)]
             
+            st.markdown("""<style>div[data-testid="stMetricValue"] {font-size: 28px;}</style>""", unsafe_allow_html=True)
             total_os, os_finalizadas, os_sem_valorizacao, custo_total, custo_medio, veiculos_atendidos, tempo_medio_dias = (
                 df_filtered['numeroos'].nunique(),
                 df_filtered[(df_filtered['datahorafim'].notna()) & (df_filtered['status'].fillna('').str.strip().str.upper() == 'FINALIZADA')]['numeroos'].nunique(),
@@ -248,27 +251,9 @@ def render_dashboard_page():
                 df_filtered['placaequipamento'].nunique(),
                 int(((df_filtered.dropna(subset=['datahorainicio', 'datahorafim'])['datahorafim'] - df_filtered.dropna(subset=['datahorainicio', 'datahorafim'])['datahorainicio']).dt.total_seconds() / (24*3600)).mean()) if not df_filtered.dropna(subset=['datahorainicio', 'datahorafim']).empty else 0
             )
-
-            st.markdown("""
-            <style>
-            div[data-testid="stMetricValue"] {
-                font-size: 22px !important;
-            }
-            div[data-testid="stMetricLabel"] {
-                font-size: 12px !important;
-                font-weight: 600 !important;
-            }
-            </style>
-            """, unsafe_allow_html=True)
-
+            
             col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
-            col1.metric("ORDENS DE SERVIÇO", f"{total_os}")
-            col2.metric("OS FINALIZADAS", f"{os_finalizadas}")
-            col3.metric("OS SEM VALORIZAÇÃO", f"{os_sem_valorizacao}")
-            col4.metric("CUSTO TOTAL", f"R$ {custo_total:,.2f}")
-            col5.metric("CUSTO MÉDIO", f"R$ {custo_medio:,.2f}")
-            col6.metric("VEÍCULOS ATENDIDOS", f"{veiculos_atendidos}")
-            col7.metric("DIAS DE ATENDIMENTO", f"{tempo_medio_dias}")
+            col1.metric("ORDENS DE SERVIÇO", f"{total_os}"); col2.metric("OS FINALIZADAS", f"{os_finalizadas}"); col3.metric("OS SEM VALORIZAÇÃO", f"{os_sem_valorizacao}"); col4.metric("CUSTO TOTAL", f"R$ {custo_total:,.2f}"); col5.metric("CUSTO MÉDIO", f"R$ {custo_medio:,.2f}"); col6.metric("VEÍCULOS ATENDIDOS", f"{veiculos_atendidos}"); col7.metric("DIAS DE ATENDIMENTO", f"{tempo_medio_dias}")
 
             chart_col1, chart_col2 = st.columns(2)
             with chart_col1:
@@ -287,9 +272,7 @@ def render_dashboard_page():
                     bars = alt.Chart(chart_df_long).mark_bar().encode(x=alt.X('Mês:N', sort=None, title='Mês'), y=alt.Y('Quantidade:Q', title='Quantidade de OS'), color=alt.Color('Status:N', title='Status da OS'), tooltip=['Mês', 'Status', 'Quantidade'], xOffset='Status:N').properties(width=alt.Step(20))
                     text = bars.mark_text(align='center', baseline='bottom', dy=-5).encode(text='Quantidade:Q')
                     st.altair_chart((bars + text), use_container_width=True)
-                else: 
-                    st.info("Nenhum dado para exibir no gráfico de Registro de OS com os filtros selecionados.")
-                    
+                else: st.info("Nenhum dado para exibir no gráfico de Registro de OS com os filtros selecionados.")
             with chart_col2:
                 st.header("SITUAÇÃO DA OS")
                 situacao_counts = df_filtered['Situação da OS'].value_counts().reset_index()
@@ -306,14 +289,12 @@ def render_dashboard_page():
                 manutencao_counts.columns = ['Tipo de Manutenção', 'Quantidade']
                 chart = alt.Chart(manutencao_counts).mark_bar().encode(x=alt.X('Quantidade:Q', title='Quantidade de OS'), y=alt.Y('Tipo de Manutenção:N', sort='-x', title='Tipo de Manutenção'))
                 st.altair_chart(chart, use_container_width=True)
-                
             with cat_col2:
                 st.subheader("POR MARCA DO CAMINHÃO")
                 marca_counts = df_filtered.fillna({'marcaequipamento': 'Não Informada'}).groupby('marcaequipamento')['numeroos'].nunique().sort_values(ascending=True).reset_index()
                 marca_counts.columns = ['Marca', 'Quantidade']
                 chart = alt.Chart(marca_counts).mark_bar().encode(x=alt.X('Quantidade:Q', title='Quantidade de OS'), y=alt.Y('Marca:N', sort='-x', title='Marca'))
                 st.altair_chart(chart, use_container_width=True)
-                
             st.subheader("CONTAGEM DE OS POR PLACA")
             placa_counts = df_filtered.fillna({'placaequipamento': 'Não Informada'}).groupby('placaequipamento')['numeroos'].nunique().sort_values(ascending=False).reset_index()
             placa_counts.columns = ['Placa', 'Quantidade']
@@ -325,16 +306,11 @@ def render_dashboard_page():
             col_filtro1, col_filtro2 = st.columns([2, 2])
             with col_filtro1:
                 placas_com_custo = sorted(df_filtered[df_filtered['valortotal'] > 0]['placaequipamento'].unique())
-                if placas_com_custo:
-                    placa_selecionada = st.selectbox('Selecione uma placa:', placas_com_custo, key="detalhe_placa")
-                else:
-                    st.info("Nenhuma placa com dados de custo disponível.")
-                    return
-                    
+                placa_selecionada = st.selectbox('Selecione uma placa:', placas_com_custo, key="detalhe_placa")
             with col_filtro2:
                 valorizacao_filtro = st.radio("Filtrar por valorização:", ('Todas', 'OS Valorizada', 'OS Não Valorizada'), horizontal=True)
 
-            if placas_com_custo and placa_selecionada:
+            if placa_selecionada:
                 df_placa = df_filtered[df_filtered['placaequipamento'] == placa_selecionada].copy()
                 df_placa_filtrada = df_placa.copy()
                 if valorizacao_filtro == 'OS Valorizada':
@@ -355,12 +331,7 @@ def render_dashboard_page():
                         int(((df_placa_filtrada.dropna(subset=['datahorainicio', 'datahorafim'])['datahorafim'] - df_placa_filtrada.dropna(subset=['datahorainicio', 'datahorafim'])['datahorainicio']).dt.total_seconds() / (24 * 3600)).mean()) if not df_placa_filtrada.dropna(subset=['datahorainicio', 'datahorafim']).empty else 0,
                         df_placa_filtrada['motoristaresponsavel'].nunique()
                     )
-                    st.metric("Ordens de Serviço Abertas", os_abertas)
-                    st.metric("Ordens de Serviço Executadas", os_executadas)
-                    st.metric("Valor Total de Serviços", f"R$ {valor_total_servicos:,.2f}")
-                    st.metric("Valor Médio de Manutenções", f"R$ {valor_medio:,.2f}")
-                    st.metric("Tempo Médio por OS (dias)", f"{tempo_medio_dias_placa}")
-                    st.metric("Quantidade Motoristas", qtd_motoristas)
+                    st.metric("Ordens de Serviço Abertas", os_abertas); st.metric("Ordens de Serviço Executadas", os_executadas); st.metric("Valor Total de Serviços", f"R$ {valor_total_servicos:,.2f}"); st.metric("Valor Médio de Manutenções", f"R$ {valor_medio:,.2f}"); st.metric("Tempo Médio por OS (dias)", f"{tempo_medio_dias_placa}"); st.metric("Quantidade Motoristas", qtd_motoristas)
                 
                 with col_dir:
                     st.subheader("DETALHES DAS ORDENS DE SERVIÇO")
@@ -386,6 +357,7 @@ def render_dashboard_page():
                 custo_por_motorista = df_placa_filtrada.groupby('motoristaresponsavel').agg(valor_total=('valortotal', 'sum'), qtd_os=('numeroos', 'nunique')).reset_index().sort_values(by='valor_total', ascending=False)
                 custo_por_motorista.columns = ['Motorista', 'Valor Total de Serviços', 'Qtd. OS Abertas']
                 st.dataframe(custo_por_motorista, hide_index=True, use_container_width=True, column_config={"Valor Total de Serviços": st.column_config.NumberColumn(format="R$ %.2f")})
+            else: st.info("Nenhuma placa com dados para exibir na análise detalhada com os filtros selecionados.")
             
             st.divider()
             st.header("ORDENS DE SERVIÇO POR MOTORISTA E PLACA")
@@ -422,16 +394,18 @@ def render_andamento_page():
 
         for col in ['datahoraos', 'datahorainicio', 'datahorafim']:
             df[col] = pd.to_datetime(df[col], errors='coerce')
-
+        
         df_andamento = df[df['datahorainicio'].notna() & df['datahorafim'].isna()].copy()
+
         today = pd.to_datetime('today').normalize()
         df_andamento['TEMPO (D)'] = (today - df_andamento['datahoraos']).dt.days
         df_andamento['TEMPO (D)'] = df_andamento['TEMPO (D)'].apply(lambda x: max(x, 0))
 
-        st.metric("Total de OS em Andamento", len(df_andamento))
 
+        st.metric("Total de OS em Andamento", len(df_andamento))
+        
         df_display = df_andamento[[
-            'placaequipamento', 'marcaequipamento', 'datahoraos',
+            'placaequipamento', 'marcaequipamento', 'datahoraos', 
             'titulomanutencao', 'motoristaresponsavel', 'mecanicoresponsavel',
             'tipomanutencao', 'numeroos', 'TEMPO (D)'
         ]].rename(columns={
@@ -444,8 +418,9 @@ def render_andamento_page():
             'tipomanutencao': 'TIPO MANUT.',
             'numeroos': 'OS'
         }).sort_values(by='DATA ABERTURA', ascending=False)
-
+        
         st.dataframe(df_display, use_container_width=True, hide_index=True)
+
     except Exception as e:
         st.error(f"Ocorreu um erro ao processar o arquivo de histórico: {e}")
 
@@ -517,21 +492,25 @@ def render_settings_page():
     st.info(f"Última atualização automática: {st.session_state.last_update}")
     st.code(st.session_state.update_log, language=None)
 
-# --- CORREÇÃO: Ponto de Entrada Principal ---
+# --- Ponto de Entrada Principal ---
 def main():
-    if st.session_state.config.get('logo_url'):
-        st.sidebar.image(st.session_state.config['logo_url'])
+    if 'page' not in st.session_state:
+        st.session_state.page = "Dashboard"
 
-    # CORREÇÃO: Usando st.Page corretamente
-    dashboard_page = st.Page(render_dashboard_page, title="Dashboard", icon="📊")
-    andamento_page = st.Page(render_andamento_page, title="OS em Andamento", icon="⏳")
-    settings_page = st.Page(render_settings_page, title="Configurações", icon="⚙️")
+    pages = {
+        "Dashboard": render_dashboard_page,
+        "OS em Andamento": render_andamento_page,
+        "Configurações": render_settings_page
+    }
     
-    # CORREÇÃO: Lista de páginas para st.navigation
-    pages = [dashboard_page, andamento_page, settings_page]
-    
-    pg = st.navigation(pages)
-    pg.run()
+    with st.sidebar:
+        if st.session_state.config.get('logo_url'):
+            st.image(st.session_state.config['logo_url'])
+        
+        selection = st.radio("Navegação", list(pages.keys()))
+
+    pages[selection]()
 
 if __name__ == "__main__":
     main()
+

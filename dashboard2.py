@@ -14,6 +14,13 @@ st.set_page_config(layout="wide")
 CONFIG_FILE = "config.json"
 LOGO_URL = "https://github.com/WRSouza93/dashboard-manutencao/blob/main/Translek.png?raw=true"
 
+# MAPEAMENTO DE MESES EM PORTUGUÊS
+MONTHS_PT = {
+    1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 
+    5: "Mai", 6: "Jun", 7: "Jul", 8: "Ago",
+    9: "Set", 10: "Out", 11: "Nov", 12: "Dez"
+}
+
 # --- Funções de Gerenciamento de Configuração ---
 def load_config():
     """Carrega as configurações do arquivo JSON se ele existir."""
@@ -178,6 +185,38 @@ def classify_os_status(row):
     if pd.isna(row['datahorainicio']) and pd.isna(row['datahorafim']): return "EM BRANCO"
     return "OUTRO"
 
+def apply_filters(df, anos_selecionados, meses_selecionados, os_selecionadas, marca_selecionada, 
+                 placa_selecionada_filtro, tipo_manutencao_selecionado, situacao_selecionada, 
+                 motorista_selecionado):
+    """Aplica filtros ao DataFrame."""
+    df_filtered = df.copy()
+    
+    # APLICAR FILTRO DE ANO (multiselect)
+    if anos_selecionados and 'Todos' not in anos_selecionados:
+        anos_numeros = [int(ano) for ano in anos_selecionados]
+        df_filtered = df_filtered[df_filtered['datahoraos'].dt.year.isin(anos_numeros)]
+    
+    # APLICAR FILTRO DE MÊS (multiselect)
+    if meses_selecionados and 'Todos' not in meses_selecionados:
+        meses_numeros = [k for k, v in MONTHS_PT.items() if v in meses_selecionados]
+        df_filtered = df_filtered[df_filtered['datahoraos'].dt.month.isin(meses_numeros)]
+    
+    # APLICAR OUTROS FILTROS
+    if os_selecionadas: 
+        df_filtered = df_filtered[df_filtered['numeroos'].isin(os_selecionadas)]
+    if marca_selecionada: 
+        df_filtered = df_filtered[df_filtered['marcaequipamento'].isin(marca_selecionada)]
+    if placa_selecionada_filtro: 
+        df_filtered = df_filtered[df_filtered['placaequipamento'].isin(placa_selecionada_filtro)]
+    if tipo_manutencao_selecionado: 
+        df_filtered = df_filtered[df_filtered['titulomanutencao'].isin(tipo_manutencao_selecionado)]
+    if situacao_selecionada: 
+        df_filtered = df_filtered[df_filtered['Situação da OS'].isin(situacao_selecionada)]
+    if motorista_selecionado: 
+        df_filtered = df_filtered[df_filtered['motoristaresponsavel'].isin(motorista_selecionado)]
+    
+    return df_filtered
+
 # --- Funções de Renderização de Página ---
 def render_dashboard_page():
     col1, col2 = st.columns([4, 1])
@@ -222,8 +261,15 @@ def render_dashboard_page():
             
         df['Situação da OS'] = df.apply(classify_os_status, axis=1)
         
+        # FILTROS NA SIDEBAR (MULTISELECT)
         anos = ['Todos'] + sorted(df['datahoraos'].dt.year.dropna().unique().astype(int), reverse=True)
-        ano_selecionado = st.sidebar.selectbox('Período (Ano)', anos)
+        anos_selecionados = st.sidebar.multiselect('Período (Ano)', anos, default=['Todos'])
+        
+        # FILTRO DE MÊS EM PORTUGUÊS (MULTISELECT)
+        meses_disponveis = sorted(df['datahoraos'].dt.month.dropna().unique().astype(int))
+        meses_opcoes = ['Todos'] + [MONTHS_PT[mes] for mes in meses_disponveis]
+        meses_selecionados = st.sidebar.multiselect('Mês', meses_opcoes, default=['Todos'])
+        
         os_list = sorted(df['numeroos'].dropna().unique().astype(int))
         os_selecionadas = st.sidebar.multiselect('Pesquisar OS', os_list)
         marcas = sorted(df['marcaequipamento'].dropna().unique())
@@ -237,14 +283,10 @@ def render_dashboard_page():
         motoristas = sorted(df['motoristaresponsavel'].dropna().unique())
         motorista_selecionado = st.sidebar.multiselect('Motorista', motoristas)
 
-        df_filtered = df.copy()
-        if ano_selecionado != 'Todos': df_filtered = df_filtered[df_filtered['datahoraos'].dt.year == ano_selecionado]
-        if os_selecionadas: df_filtered = df_filtered[df_filtered['numeroos'].isin(os_selecionadas)]
-        if marca_selecionada: df_filtered = df_filtered[df_filtered['marcaequipamento'].isin(marca_selecionada)]
-        if placa_selecionada_filtro: df_filtered = df_filtered[df_filtered['placaequipamento'].isin(placa_selecionada_filtro)]
-        if tipo_manutencao_selecionado: df_filtered = df_filtered[df_filtered['titulomanutencao'].isin(tipo_manutencao_selecionado)]
-        if situacao_selecionada: df_filtered = df_filtered[df_filtered['Situação da OS'].isin(situacao_selecionada)]
-        if motorista_selecionado: df_filtered = df_filtered[df_filtered['motoristaresponsavel'].isin(motorista_selecionado)]
+        # APLICAR FILTROS
+        df_filtered = apply_filters(df, anos_selecionados, meses_selecionados, os_selecionadas, 
+                                  marca_selecionada, placa_selecionada_filtro, tipo_manutencao_selecionado, 
+                                  situacao_selecionada, motorista_selecionado)
         
         total_os, os_finalizadas, os_sem_valorizacao, custo_total, custo_medio, veiculos_atendidos, tempo_medio_dias = (
             df_filtered['numeroos'].nunique(),
@@ -337,7 +379,7 @@ def render_dashboard_page():
                 placa_selecionada = st.selectbox('Selecione uma placa:', placas_com_custo, key="detalhe_placa")
             else:
                 st.info("Nenhuma placa com dados de custo disponível.")
-                return
+                placa_selecionada = None
                 
         with col_filtro2:
             valorizacao_filtro = st.radio("Filtrar por valorização:", ('Todas', 'OS Valorizada', 'OS Não Valorizada'), horizontal=True)
@@ -397,14 +439,122 @@ def render_dashboard_page():
         
         st.divider()
         st.header("ORDENS DE SERVIÇO POR MOTORISTA E PLACA")
-        pivot_data = df_filtered.fillna({'motoristaresponsavel': 'Não Informado', 'placaequipamento': 'Não Informada'}).groupby(['motoristaresponsavel', 'placaequipamento'])['numeroos'].nunique().reset_index()
-        pivot_data.columns = ['Motorista', 'Placa', 'Quantidade de OS']
-        driver_total_os = df_filtered.fillna({'motoristaresponsavel': 'Não Informado'}).groupby('motoristaresponsavel')['numeroos'].nunique().to_dict()
-        for driver in sorted(pivot_data['Motorista'].unique()):
+        
+        # Preparar dados para tabela detalhada
+        df_motorista_detalhado = df_filtered.fillna({
+            'motoristaresponsavel': 'Não Informado', 
+            'placaequipamento': 'Não Informada',
+            'marcaequipamento': 'Não Informada',
+            'titulomanutencao': 'Não Informado',
+            'mecanicoresponsavel': 'Não Informado',
+            'tipomanutencao': 'Não Informado',
+            'descricaoos': 'Sem descrição'
+        }).copy()
+        
+        # Calcular totais por motorista
+        driver_total_os = df_motorista_detalhado.groupby('motoristaresponsavel')['numeroos'].nunique().to_dict()
+        
+        for driver in sorted(driver_total_os.keys()):
             total_os_for_driver = driver_total_os.get(driver, 0)
+            
             with st.expander(f"Motorista: {driver} ({total_os_for_driver} OS no total)"):
-                driver_data = pivot_data[pivot_data['Motorista'] == driver].sort_values(by='Quantidade de OS', ascending=False)
-                st.dataframe(driver_data[['Placa', 'Quantidade de OS']], use_container_width=True, hide_index=True)
+                # Filtrar dados do motorista
+                driver_data = df_motorista_detalhado[df_motorista_detalhado['motoristaresponsavel'] == driver].copy()
+                
+                # Preparar tabela detalhada igual à página de OS em Andamento
+                df_display_motorista = driver_data[[
+                    'placaequipamento', 'marcaequipamento', 'datahoraos',
+                    'titulomanutencao', 'motoristaresponsavel', 'mecanicoresponsavel',
+                    'tipomanutencao', 'numeroos', 'descricaoos'
+                ]].rename(columns={
+                    'placaequipamento': 'PLACA',
+                    'marcaequipamento': 'MARCA',
+                    'datahoraos': 'DATA ABERTURA',
+                    'titulomanutencao': 'TÍTULO MANUTENÇÃO',
+                    'motoristaresponsavel': 'MOTORISTA',
+                    'mecanicoresponsavel': 'MECÂNICO',
+                    'tipomanutencao': 'TIPO MANUT.',
+                    'numeroos': 'OS',
+                    'descricaoos': 'DESCRIÇÃO'
+                }).sort_values(by='DATA ABERTURA', ascending=False)
+                
+                # Exibir tabela detalhada
+                st.dataframe(
+                    df_display_motorista, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "DATA ABERTURA": st.column_config.DatetimeColumn(
+                            "DATA ABERTURA",
+                            format="DD/MM/YYYY HH:mm"
+                        ),
+                        "DESCRIÇÃO": st.column_config.TextColumn(
+                            "DESCRIÇÃO",
+                            width="large"
+                        )
+                    }
+                )
+        
+        # NOVA TABELA GERAL NO FINAL
+        st.divider()
+        st.header("TABELA GERAL DE ORDENS DE SERVIÇO")
+        
+        # Preparar dados com tempo em dias
+        df_tabela_geral = df_filtered.fillna({
+            'placaequipamento': 'Não Informada',
+            'marcaequipamento': 'Não Informada',
+            'titulomanutencao': 'Não Informado',
+            'motoristaresponsavel': 'Não Informado',
+            'mecanicoresponsavel': 'Não Informado',
+            'tipomanutencao': 'Não Informado',
+            'descricaoos': 'Sem descrição'
+        }).copy()
+        
+        # Calcular tempo em dias
+        today = pd.to_datetime('today').normalize()
+        df_tabela_geral['TEMPO (D)'] = (today - df_tabela_geral['datahoraos']).dt.days
+        df_tabela_geral['TEMPO (D)'] = df_tabela_geral['TEMPO (D)'].apply(lambda x: max(x, 0))
+        
+        # Preparar tabela igual à OS em Andamento
+        df_display_geral = df_tabela_geral[[
+            'placaequipamento', 'marcaequipamento', 'datahoraos',
+            'titulomanutencao', 'motoristaresponsavel', 'mecanicoresponsavel',
+            'tipomanutencao', 'numeroos', 'TEMPO (D)', 'descricaoos'
+        ]].rename(columns={
+            'placaequipamento': 'PLACA',
+            'marcaequipamento': 'MARCA',
+            'datahoraos': 'DATA ABERTURA',
+            'titulomanutencao': 'TÍTULO MANUTENÇÃO',
+            'motoristaresponsavel': 'MOTORISTA',
+            'mecanicoresponsavel': 'MECÂNICO',
+            'tipomanutencao': 'TIPO MANUT.',
+            'numeroos': 'OS',
+            'descricaoos': 'DESCRIÇÃO'
+        }).sort_values(by='DATA ABERTURA', ascending=False)
+        
+        st.info(f"Mostrando {len(df_display_geral)} registros filtrados")
+        
+        # Exibir tabela geral
+        st.dataframe(
+            df_display_geral, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "DATA ABERTURA": st.column_config.DatetimeColumn(
+                    "DATA ABERTURA",
+                    format="DD/MM/YYYY HH:mm"
+                ),
+                "DESCRIÇÃO": st.column_config.TextColumn(
+                    "DESCRIÇÃO",
+                    width="large"
+                ),
+                "TEMPO (D)": st.column_config.NumberColumn(
+                    "TEMPO (D)",
+                    format="%d"
+                )
+            }
+        )
+
     except Exception as e:
         st.error(f"Ocorreu um erro ao processar os dados da API: {e}")
 
@@ -416,16 +566,49 @@ def render_andamento_page():
         st.image(LOGO_URL, width=200)
 
     # Verifica se há dados carregados
-    if not st.session_state.api_data:
+    if not st.session_state.api_data or not st.session_state.api_details:
         st.warning("Nenhum dado carregado. Vá para o Dashboard e clique em 'Atualizar Dados'.")
         return
 
     try:
-        df = pd.DataFrame(st.session_state.api_data['data'])
-        for col in ['datahoraos', 'datahorainicio', 'datahorafim']:
-            df[col] = pd.to_datetime(df[col], errors='coerce')
+        df, df_detalhes = load_data_from_session()
+        if df is None:
+            st.error("Erro ao processar os dados da API.")
+            return
+            
+        df['Situação da OS'] = df.apply(classify_os_status, axis=1)
 
-        df_andamento = df[df['datahorainicio'].notna() & df['datahorafim'].isna()].copy()
+        # FILTROS NA SIDEBAR (IGUAIS AO DASHBOARD)
+        st.sidebar.header("Filtros")
+        
+        anos = ['Todos'] + sorted(df['datahoraos'].dt.year.dropna().unique().astype(int), reverse=True)
+        anos_selecionados = st.sidebar.multiselect('Período (Ano)', anos, default=['Todos'])
+        
+        # FILTRO DE MÊS EM PORTUGUÊS (MULTISELECT)
+        meses_disponveis = sorted(df['datahoraos'].dt.month.dropna().unique().astype(int))
+        meses_opcoes = ['Todos'] + [MONTHS_PT[mes] for mes in meses_disponveis]
+        meses_selecionados = st.sidebar.multiselect('Mês', meses_opcoes, default=['Todos'])
+        
+        os_list = sorted(df['numeroos'].dropna().unique().astype(int))
+        os_selecionadas = st.sidebar.multiselect('Pesquisar OS', os_list)
+        marcas = sorted(df['marcaequipamento'].dropna().unique())
+        marca_selecionada = st.sidebar.multiselect('Marca', marcas)
+        placas = sorted(df['placaequipamento'].dropna().unique())
+        placa_selecionada_filtro = st.sidebar.multiselect('Placa', placas)
+        tipos_manutencao = sorted(df['titulomanutencao'].dropna().unique())
+        tipo_manutencao_selecionado = st.sidebar.multiselect('Tipo Manutenção', tipos_manutencao)
+        situacoes = sorted(df['Situação da OS'].dropna().unique())
+        situacao_selecionada = st.sidebar.multiselect('Situação', situacoes)
+        motoristas = sorted(df['motoristaresponsavel'].dropna().unique())
+        motorista_selecionado = st.sidebar.multiselect('Motorista', motoristas)
+
+        # APLICAR FILTROS
+        df_filtered = apply_filters(df, anos_selecionados, meses_selecionados, os_selecionadas, 
+                                  marca_selecionada, placa_selecionada_filtro, tipo_manutencao_selecionado, 
+                                  situacao_selecionada, motorista_selecionado)
+
+        # Filtrar apenas OS em andamento
+        df_andamento = df_filtered[df_filtered['datahorainicio'].notna() & df_filtered['datahorafim'].isna()].copy()
         today = pd.to_datetime('today').normalize()
         df_andamento['TEMPO (D)'] = (today - df_andamento['datahoraos']).dt.days
         df_andamento['TEMPO (D)'] = df_andamento['TEMPO (D)'].apply(lambda x: max(x, 0))
@@ -447,7 +630,21 @@ def render_andamento_page():
             'numeroos': 'OS'
         }).sort_values(by='DATA ABERTURA', ascending=False)
 
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+        st.dataframe(
+            df_display, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "DATA ABERTURA": st.column_config.DatetimeColumn(
+                    "DATA ABERTURA",
+                    format="DD/MM/YYYY HH:mm"
+                ),
+                "TEMPO (D)": st.column_config.NumberColumn(
+                    "TEMPO (D)",
+                    format="%d"
+                )
+            }
+        )
     except Exception as e:
         st.error(f"Ocorreu um erro ao processar os dados: {e}")
 

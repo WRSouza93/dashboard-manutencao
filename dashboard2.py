@@ -26,11 +26,21 @@ def load_config():
     """Carrega as configurações do arquivo JSON se ele existir."""
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
+            config = json.load(f)
+        # Garante que os novos campos existam
+        if 'interval_dashboard' not in config:
+            config['interval_dashboard'] = config.get('interval', 5)
+        if 'interval_andamento' not in config:
+            config['interval_andamento'] = 5
+        # Remove campo antigo se existir
+        if 'interval' in config:
+            del config['interval']
+        return config
     return {
         'login': '',
         'password': '',
-        'interval': 5
+        'interval_dashboard': 5,
+        'interval_andamento': 5
     }
 
 def save_config():
@@ -75,8 +85,38 @@ def _get_token(login, password, log_callback):
         log_callback(f"Erro de autenticação: {e}")
         return None
 
+# NOVA FUNÇÃO: Busca apenas histórico (para página OS em Andamento)
+def fetch_historico_only(config, log_callback):
+    """Busca apenas os dados de histórico da API (sem detalhes)."""
+    login, password = config.get('login'), config.get('password')
+
+    if not all([login, password]):
+        log_callback("Erro: Login e senha devem estar configurados no config.json.")
+        return False
+
+    log_callback("Iniciando atualização do histórico...")
+    token = _get_token(login, password, log_callback)
+    if not token: 
+        return False
+
+    try:
+        log_callback("Carregando histórico...")
+        data_url = "https://yjlcmonbid.execute-api.us-east-1.amazonaws.com/os/V1/find/last-update/2020-01-01"
+        headers = {"Authorization": token}
+        data_response = requests.get(data_url, headers=headers, timeout=60)
+        data_response.raise_for_status()
+        historico_data = data_response.json()
+        
+        # Armazena dados no session_state
+        st.session_state.api_data = historico_data
+        log_callback("Histórico carregado com sucesso!")
+        return True
+    except Exception as e:
+        log_callback(f"Erro ao buscar histórico: {e}")
+        return False
+
 def fetch_api_data_online(config, log_callback):
-    """Busca os dados da API e armazena no session_state."""
+    """Busca os dados da API e armazena no session_state (histórico + detalhes)."""
     login, password = config.get('login'), config.get('password')
     st.session_state.next_update_time = None # Reseta o contador no início da atualização
 
@@ -126,7 +166,9 @@ def fetch_api_data_online(config, log_callback):
         st.session_state.api_details = all_details
         log_callback(f"Atualização completa! {len(all_details)} detalhes carregados.")
         st.session_state.last_update = time.strftime('%d/%m/%Y %H:%M:%S')
-        interval_seconds = config.get('interval', 5) * 60
+        
+        # Usa intervalo do dashboard por padrão
+        interval_seconds = config.get('interval_dashboard', 5) * 60
         st.session_state.next_update_time = time.time() + interval_seconds
         return True
     except Exception as e:
@@ -142,14 +184,15 @@ def scheduler_loop():
         fetch_api_data_online(st.session_state.config, scheduler_log_callback)
         st.cache_data.clear()
         
-        interval_seconds = st.session_state.config.get('interval', 5) * 60
+        # Usa intervalo do dashboard para o agendador
+        interval_seconds = st.session_state.config.get('interval_dashboard', 5) * 60
         for _ in range(interval_seconds):
             if not st.session_state.get('scheduler_running', False): break
             time.sleep(1)
 
 @st.cache_data
 def load_data_from_session():
-    """Carrega os dados do session_state e os processa."""
+    """Carrega os dados do session_state e os processa (histórico + detalhes)."""
     if not st.session_state.api_data or not st.session_state.api_details:
         return None, None
     
@@ -174,8 +217,25 @@ def load_data_from_session():
         df_merged[col] = pd.to_datetime(df_merged[col], errors='coerce')
     return df_merged, df_detalhes
 
+# NOVA FUNÇÃO: Carrega apenas dados do histórico (para página OS em Andamento)
+@st.cache_data
+def load_historico_only():
+    """Carrega apenas os dados do histórico do session_state."""
+    if not st.session_state.api_data:
+        return None
+    
+    # Processa dados do histórico
+    df_historico = pd.DataFrame(st.session_state.api_data['data'])
+    
+    # Processamento básico dos dados
+    df_historico['numeroos'] = df_historico['numeroos'].astype(int)
+    for col in ['datahoraos', 'datahorainicio', 'datahorafim']:
+        df_historico[col] = pd.to_datetime(df_historico[col], errors='coerce')
+    
+    return df_historico
+
 def classify_os_status(row):
-    is_valorizado = row['valortotal'] > 0
+    is_valorizado = row.get('valortotal', 0) > 0
     status_str = str(row.get('status', '')).strip().upper()
     is_finalizada = pd.notna(row['datahorafim']) and status_str == 'FINALIZADA'
     if is_valorizado and is_finalizada: return "VALORIZADO E FINALIZADO"
@@ -558,6 +618,7 @@ def render_dashboard_page():
     except Exception as e:
         st.error(f"Ocorreu um erro ao processar os dados da API: {e}")
 
+# PÁGINA OS EM ANDAMENTO OTIMIZADA
 def render_andamento_page():
     col1, col2 = st.columns([4, 1])
     with col1:
@@ -565,42 +626,69 @@ def render_andamento_page():
     with col2:
         st.image(LOGO_URL, width=200)
 
+    # BOTÃO DE ATUALIZAÇÃO OTIMIZADO (SÓ HISTÓRICO)
+    col1_top, col2_top = st.columns([1, 4])
+    with col1_top:
+        if st.button("🔄 Atualizar Dados", key="atualizar_andamento"):
+            if not st.session_state.config.get('login') or not st.session_state.config.get('password'):
+                st.error("Configure login e senha no arquivo config.json")
+                return
+            log_placeholder = st.empty()
+            with st.spinner("Atualizando histórico..."):
+                # USA A NOVA FUNÇÃO QUE SÓ BUSCA HISTÓRICO
+                success = fetch_historico_only(st.session_state.config, log_callback=log_placeholder.info)
+                if success:
+                    st.cache_data.clear()
+                    log_placeholder.empty()
+                    st.success("Histórico atualizado com sucesso!")
+                    st.rerun()
+
     # Verifica se há dados carregados
-    if not st.session_state.api_data or not st.session_state.api_details:
-        st.warning("Nenhum dado carregado. Vá para o Dashboard e clique em 'Atualizar Dados'.")
+    if not st.session_state.api_data:
+        st.warning("Nenhum dado carregado. Clique em 'Atualizar Dados' para buscar informações da API.")
         return
 
     try:
-        df, df_detalhes = load_data_from_session()
+        # USA A NOVA FUNÇÃO QUE SÓ CARREGA HISTÓRICO
+        df = load_historico_only()
         if df is None:
             st.error("Erro ao processar os dados da API.")
             return
             
+        # Adiciona situação das OS (sem usar valortotal dos detalhes)
         df['Situação da OS'] = df.apply(classify_os_status, axis=1)
 
         # FILTROS NA SIDEBAR (IGUAIS AO DASHBOARD)
         st.sidebar.header("Filtros")
         
+        col1_sidebar_and, col2_sidebar_and = st.sidebar.columns(2)
+        with col2_sidebar_and:
+            if st.button("Limpar Filtros", key="limpar_filtros_andamento"):
+                keys_to_keep = ['config', 'scheduler_running', 'scheduler_thread', 'last_update', 'update_log', 'next_update_time', 'api_data', 'api_details']
+                for key in list(st.session_state.keys()):
+                    if key not in keys_to_keep: del st.session_state[key]
+                st.rerun()
+        
         anos = ['Todos'] + sorted(df['datahoraos'].dt.year.dropna().unique().astype(int), reverse=True)
-        anos_selecionados = st.sidebar.multiselect('Período (Ano)', anos, default=['Todos'])
+        anos_selecionados = st.sidebar.multiselect('Período (Ano)', anos, default=['Todos'], key="anos_andamento")
         
         # FILTRO DE MÊS EM PORTUGUÊS (MULTISELECT)
         meses_disponveis = sorted(df['datahoraos'].dt.month.dropna().unique().astype(int))
         meses_opcoes = ['Todos'] + [MONTHS_PT[mes] for mes in meses_disponveis]
-        meses_selecionados = st.sidebar.multiselect('Mês', meses_opcoes, default=['Todos'])
+        meses_selecionados = st.sidebar.multiselect('Mês', meses_opcoes, default=['Todos'], key="meses_andamento")
         
         os_list = sorted(df['numeroos'].dropna().unique().astype(int))
-        os_selecionadas = st.sidebar.multiselect('Pesquisar OS', os_list)
+        os_selecionadas = st.sidebar.multiselect('Pesquisar OS', os_list, key="os_andamento")
         marcas = sorted(df['marcaequipamento'].dropna().unique())
-        marca_selecionada = st.sidebar.multiselect('Marca', marcas)
+        marca_selecionada = st.sidebar.multiselect('Marca', marcas, key="marca_andamento")
         placas = sorted(df['placaequipamento'].dropna().unique())
-        placa_selecionada_filtro = st.sidebar.multiselect('Placa', placas)
+        placa_selecionada_filtro = st.sidebar.multiselect('Placa', placas, key="placa_andamento")
         tipos_manutencao = sorted(df['titulomanutencao'].dropna().unique())
-        tipo_manutencao_selecionado = st.sidebar.multiselect('Tipo Manutenção', tipos_manutencao)
+        tipo_manutencao_selecionado = st.sidebar.multiselect('Tipo Manutenção', tipos_manutencao, key="tipo_andamento")
         situacoes = sorted(df['Situação da OS'].dropna().unique())
-        situacao_selecionada = st.sidebar.multiselect('Situação', situacoes)
+        situacao_selecionada = st.sidebar.multiselect('Situação', situacoes, key="situacao_andamento")
         motoristas = sorted(df['motoristaresponsavel'].dropna().unique())
-        motorista_selecionado = st.sidebar.multiselect('Motorista', motoristas)
+        motorista_selecionado = st.sidebar.multiselect('Motorista', motoristas, key="motorista_andamento")
 
         # APLICAR FILTROS
         df_filtered = apply_filters(df, anos_selecionados, meses_selecionados, os_selecionadas, 
@@ -615,10 +703,21 @@ def render_andamento_page():
 
         st.metric("Total de OS em Andamento", len(df_andamento))
 
-        df_display = df_andamento[[
+        # TABELA COM DESCRIÇÃO
+        df_andamento_fillna = df_andamento.fillna({
+            'placaequipamento': 'Não Informada',
+            'marcaequipamento': 'Não Informada',
+            'titulomanutencao': 'Não Informado',
+            'motoristaresponsavel': 'Não Informado',
+            'mecanicoresponsavel': 'Não Informado',
+            'tipomanutencao': 'Não Informado',
+            'descricaoos': 'Sem descrição'
+        })
+
+        df_display = df_andamento_fillna[[
             'placaequipamento', 'marcaequipamento', 'datahoraos',
             'titulomanutencao', 'motoristaresponsavel', 'mecanicoresponsavel',
-            'tipomanutencao', 'numeroos', 'TEMPO (D)'
+            'tipomanutencao', 'numeroos', 'TEMPO (D)', 'descricaoos'
         ]].rename(columns={
             'placaequipamento': 'PLACA',
             'marcaequipamento': 'MARCA',
@@ -627,7 +726,8 @@ def render_andamento_page():
             'motoristaresponsavel': 'MOTORISTA',
             'mecanicoresponsavel': 'MECÂNICO',
             'tipomanutencao': 'TIPO MANUT.',
-            'numeroos': 'OS'
+            'numeroos': 'OS',
+            'descricaoos': 'DESCRIÇÃO'
         }).sort_values(by='DATA ABERTURA', ascending=False)
 
         st.dataframe(
@@ -642,6 +742,10 @@ def render_andamento_page():
                 "TEMPO (D)": st.column_config.NumberColumn(
                     "TEMPO (D)",
                     format="%d"
+                ),
+                "DESCRIÇÃO": st.column_config.TextColumn(
+                    "DESCRIÇÃO",
+                    width="large"
                 )
             }
         )
@@ -664,18 +768,32 @@ def render_settings_page():
 {
     "login": "seu_login_aqui",
     "password": "sua_senha_aqui",
-    "interval": 5
+    "interval_dashboard": 5,
+    "interval_andamento": 5
 }
         """)
     else:
         st.success("✅ Login e senha configurados no config.json")
 
-    # Configuração do intervalo
-    st.session_state.config['interval'] = st.number_input(
-        "Intervalo de atualização (minutos)", 
-        min_value=1, 
-        value=st.session_state.config.get('interval', 5)
-    )
+    # NOVO: CONFIGURAÇÕES DE INTERVALO SEPARADAS
+    st.subheader("Intervalos de Atualização")
+    
+    col1_interval, col2_interval = st.columns(2)
+    with col1_interval:
+        st.session_state.config['interval_dashboard'] = st.number_input(
+            "Intervalo Dashboard (minutos)", 
+            min_value=1, 
+            value=st.session_state.config.get('interval_dashboard', 5),
+            help="Intervalo usado para atualizações automáticas do agendador do Dashboard"
+        )
+    
+    with col2_interval:
+        st.session_state.config['interval_andamento'] = st.number_input(
+            "Intervalo OS em Andamento (minutos)", 
+            min_value=1, 
+            value=st.session_state.config.get('interval_andamento', 5),
+            help="Intervalo de referência para a página de OS em Andamento"
+        )
     
     if st.button("Salvar Configurações"):
         save_config()
@@ -704,6 +822,7 @@ def render_settings_page():
             
     status_color = "green" if st.session_state.scheduler_running else "red"
     st.markdown(f"**Status do Agendador:** <span style='color:{status_color};'>{'Ativo' if st.session_state.scheduler_running else 'Parado'}</span>", unsafe_allow_html=True)
+    st.info("ℹ️ O agendador utiliza o intervalo do Dashboard para atualizações automáticas")
     
     countdown_placeholder = st.empty()
     if st.session_state.scheduler_running:

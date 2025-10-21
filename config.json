@@ -1,5 +1,7 @@
 {
     "login": "translekapi",
     "password": "translekapi123",
-    "interval": 5
+    "interval": 5,
+    "interval_dashboard": 5,
+    "interval_andamento": 1
 }

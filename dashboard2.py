@@ -523,13 +523,15 @@ def render_dashboard_page():
                 
                 # Preparar tabela detalhada igual à página de OS em Andamento
                 df_display_motorista = driver_data[[
-                    'placaequipamento', 'marcaequipamento', 'datahoraos',
+                    'placaequipamento', 'marcaequipamento', 'datahoraos', 'datahorainicio', 'datahorafim',
                     'titulomanutencao', 'motoristaresponsavel', 'mecanicoresponsavel',
                     'tipomanutencao', 'numeroos', 'descricaoos'
                 ]].rename(columns={
                     'placaequipamento': 'PLACA',
                     'marcaequipamento': 'MARCA',
                     'datahoraos': 'DATA ABERTURA',
+                    'datahorainicio': 'DATA INÍCIO',
+                    'datahorafim': 'DATA FIM',
                     'titulomanutencao': 'TÍTULO MANUTENÇÃO',
                     'motoristaresponsavel': 'MOTORISTA',
                     'mecanicoresponsavel': 'MECÂNICO',
@@ -579,7 +581,7 @@ def render_dashboard_page():
         df_display_geral = df_tabela_geral[[
             'placaequipamento', 'marcaequipamento', 'datahoraos',
             'titulomanutencao', 'motoristaresponsavel', 'mecanicoresponsavel',
-            'tipomanutencao', 'numeroos', 'TEMPO (D)', 'descricaoos'
+            'tipomanutencao', 'numeroos', 'TEMPO (D)', 'datahorainicio', 'datahorafim', 'descricaoos'
         ]].rename(columns={
             'placaequipamento': 'PLACA',
             'marcaequipamento': 'MARCA',
@@ -589,6 +591,8 @@ def render_dashboard_page():
             'mecanicoresponsavel': 'MECÂNICO',
             'tipomanutencao': 'TIPO MANUT.',
             'numeroos': 'OS',
+            'datahorainicio': 'DATA INÍCIO',
+            'datahorafim': 'DATA FIM',
             'descricaoos': 'DESCRIÇÃO'
         }).sort_values(by='DATA ABERTURA', ascending=False)
         
@@ -604,13 +608,21 @@ def render_dashboard_page():
                     "DATA ABERTURA",
                     format="DD/MM/YYYY HH:mm"
                 ),
-                "DESCRIÇÃO": st.column_config.TextColumn(
-                    "DESCRIÇÃO",
-                    width="large"
+                "DATA INÍCIO": st.column_config.DatetimeColumn(
+                    "DATA INÍCIO",
+                    format="DD/MM/YYYY HH:mm"
+                ),
+                "DATA FIM": st.column_config.DatetimeColumn(
+                    "DATA FIM",
+                    format="DD/MM/YYYY HH:mm"
                 ),
                 "TEMPO (D)": st.column_config.NumberColumn(
                     "TEMPO (D)",
                     format="%d"
+                ),
+                "DESCRIÇÃO": st.column_config.TextColumn(
+                    "DESCRIÇÃO",
+                    width=400
                 )
             }
         )

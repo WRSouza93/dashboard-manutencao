@@ -2,7 +2,7 @@
 Módulo de banco de dados PostgreSQL (Supabase) para armazenar OS finalizadas e detalhes.
 - ultimaatualizacao: apenas OS com status FINALIZADA e datahorainicio/datahorafim preenchidos.
 - detalhesOS: itens de material/valor por OS.
-Configuração: use a variável de ambiente DATABASE_URL com a connection string (incluindo senha).
+Configuração: no Streamlit Cloud use Secrets (TOML) com DATABASE_URL; localmente use variável de ambiente.
 """
 import os
 from contextlib import contextmanager
@@ -11,12 +11,24 @@ from typing import List, Dict, Any
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-# Connection string: defina DATABASE_URL no Streamlit Cloud (ou .env local)
-# Ex: postgresql://postgres:SUA_SENHA@db.rvxnkscptvpxobzvvole.supabase.co:5432/postgres
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://postgres:[YOUR-PASSWORD]@db.rvxnkscptvpxobzvvole.supabase.co:5432/postgres"
-)
+_DEFAULT_URL = "postgresql://postgres:[YOUR-PASSWORD]@db.rvxnkscptvpxobzvvole.supabase.co:5432/postgres"
+
+
+def _get_database_url() -> str:
+    """Obtém a connection string: Streamlit Cloud usa st.secrets; localmente usa os.environ."""
+    url = None
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and st.secrets and st.secrets.get("DATABASE_URL"):
+            url = st.secrets["DATABASE_URL"]
+    except Exception:
+        pass
+    if not url:
+        url = os.environ.get("DATABASE_URL", _DEFAULT_URL)
+    # Supabase exige SSL em conexões externas
+    if url and "supabase.co" in url and "sslmode=" not in url:
+        url = url + ("&" if "?" in url else "?") + "sslmode=require"
+    return url
 
 # Campos da API last-update (registro de OS)
 OS_COLUMNS = [
@@ -33,7 +45,7 @@ DETALHES_COLUMNS = ["numeroos", "material", "quantidade", "valorunit", "valortot
 @contextmanager
 def get_connection():
     """Context manager para conexão com o PostgreSQL."""
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = psycopg2.connect(_get_database_url())
     try:
         yield conn
         conn.commit()

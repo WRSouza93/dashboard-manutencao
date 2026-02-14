@@ -8,8 +8,6 @@ import time
 import threading
 from streamlit.runtime.scriptrunner import add_script_run_ctx
 
-import database
-
 # --- Configuração Inicial da Página e Estado da Sessão ---
 st.set_page_config(layout="wide")
 
@@ -68,11 +66,6 @@ if 'api_data' not in st.session_state:
     st.session_state.api_data = None
 if 'api_details' not in st.session_state:
     st.session_state.api_details = None
-if 'auto_init_done' not in st.session_state:
-    st.session_state.auto_init_done = False
-
-# Inicializa o banco de dados (tabelas ultimaatualizacao e detalhesOS)
-database.init_db()
 
 # --- Funções de Lógica de Negócio (API e Dados) ---
 def _get_token(login, password, log_callback):
@@ -143,60 +136,44 @@ def fetch_api_data_online(config, log_callback):
         data_response = requests.get(data_url, headers=headers, timeout=60)
         data_response.raise_for_status()
         historico_data = data_response.json()
+        
+        # Armazena dados no session_state
         st.session_state.api_data = historico_data
         log_callback("Histórico carregado com sucesso.")
     except Exception as e:
         log_callback(f"Erro ao buscar histórico: {e}")
         return False
 
-    os_list = historico_data.get("data", [])
-    # Primeiro loop: separa quem atende ao critério (grava no banco) e quem não atende (guarda na memória)
-    os_atendem = []
-    os_nao_atendem = []
-    for item in os_list:
-        if database.os_atende_criterios(item):
-            os_atendem.append(item)
-        else:
-            os_nao_atendem.append(item)
-
-    # Grava em ultimaatualizacao só os que atendem; tabela já fica carregada
+    all_details = []
     try:
-        n_inseridas = database.inserir_os_lote(os_atendem)
-        log_callback(f"Banco: {n_inseridas} OS (FINALIZADA com datas) gravadas em ultimaatualizacao. Tabela carregada.")
+        os_list = historico_data.get("data", [])
+        total = len(os_list)
+        log_callback(f"Encontradas {total} OS. Buscando detalhes...")
+        
+        for i, os_item in enumerate(os_list):
+            if (i + 1) % 20 == 0:
+                log_callback(f"Carregando detalhes... {i+1} de {total} OS")
+            
+            numeroos = os_item.get("numeroos")
+            if numeroos:
+                details_url = f"https://yjlcmonbid.execute-api.us-east-1.amazonaws.com/os/V1/find/os-details/{numeroos}"
+                response = requests.get(details_url, headers=headers, timeout=15)
+                if response.status_code == 200 and response.json().get("status"):
+                    all_details.append(response.json())
+                time.sleep(0.05)
+        
+        # Armazena detalhes no session_state
+        st.session_state.api_details = all_details
+        log_callback(f"Atualização completa! {len(all_details)} detalhes carregados.")
+        st.session_state.last_update = time.strftime('%d/%m/%Y %H:%M:%S')
+        
+        # Usa intervalo do dashboard por padrão
+        interval_seconds = config.get('interval_dashboard', 5) * 60
+        st.session_state.next_update_time = time.time() + interval_seconds
+        return True
     except Exception as e:
-        log_callback(f"Erro ao gravar OS no banco: {e}")
-
-    # Consulta API os-details somente para os que NÃO atendem aos critérios; contagem só destes
-    all_details_nao_atendem = []
-    total_nao_atendem = len(os_nao_atendem)
-    if total_nao_atendem > 0:
-        log_callback(f"Buscando detalhes apenas para {total_nao_atendem} OS que não atendem ao critério...")
-        try:
-            for i, os_item in enumerate(os_nao_atendem):
-                if (i + 1) % 20 == 0 or (i + 1) == total_nao_atendem:
-                    log_callback(f"Detalhes (fora do critério): {i+1} de {total_nao_atendem} OS")
-                numeroos = os_item.get("numeroos")
-                if numeroos:
-                    details_url = f"https://yjlcmonbid.execute-api.us-east-1.amazonaws.com/os/V1/find/os-details/{numeroos}"
-                    response = requests.get(details_url, headers=headers, timeout=15)
-                    if response.status_code == 200:
-                        resp_json = response.json()
-                        if resp_json.get("status") and resp_json.get("data"):
-                            all_details_nao_atendem.append(resp_json)
-                    time.sleep(0.05)
-        except Exception as e:
-            log_callback(f"Erro ao buscar detalhes: {e}")
-            return False
-    else:
-        log_callback("Nenhuma OS fora do critério para consultar detalhes.")
-
-    # Session: detalhes só das OS que não atendem (as que atendem ficam no banco/detalhesOS)
-    st.session_state.api_details = all_details_nao_atendem
-    log_callback(f"Atualização concluída. {len(all_details_nao_atendem)} detalhes carregados (OS fora do critério).")
-    st.session_state.last_update = time.strftime('%d/%m/%Y %H:%M:%S')
-    interval_seconds = config.get('interval_dashboard', 5) * 60
-    st.session_state.next_update_time = time.time() + interval_seconds
-    return True
+        log_callback(f"Erro ao buscar detalhes: {e}")
+        return False
 
 def scheduler_log_callback(message):
     st.session_state.update_log = message
@@ -215,42 +192,25 @@ def scheduler_loop():
 
 @st.cache_data
 def load_data_from_session():
-    """Carrega os dados do session_state (ou do banco) e os processa (histórico + detalhes)."""
-    # Preferência: session_state (histórico completo); detalhes = sessão (OS que não atendem) + banco (OS que atendem)
-    if st.session_state.api_data:
-        data_list = st.session_state.api_data["data"]
-        detalhes_sessao = [item for entry in (st.session_state.api_details or []) if entry.get("data") for item in entry["data"]]
-        try:
-            detalhes_banco = database.buscar_detalhes_para_dashboard()
-        except Exception:
-            detalhes_banco = []
-        all_detalhes = detalhes_sessao + (detalhes_banco or [])
-    else:
-        try:
-            data_list = database.buscar_os_para_dashboard()
-            all_detalhes = database.buscar_detalhes_para_dashboard() or []
-        except Exception:
-            return None, None
-        if not data_list:
-            return None, None
-
-    df_historico = pd.DataFrame(data_list)
+    """Carrega os dados do session_state e os processa (histórico + detalhes)."""
+    if not st.session_state.api_data or not st.session_state.api_details:
+        return None, None
     
-    # Processa dados dos detalhes (já é lista plana de itens)
-    df_detalhes = pd.DataFrame(all_detalhes) if all_detalhes else pd.DataFrame()
+    # Processa dados do histórico
+    df_historico = pd.DataFrame(st.session_state.api_data['data'])
+    
+    # Processa dados dos detalhes
+    all_detalhes = [item for entry in st.session_state.api_details if entry.get('data') and entry['data'][0] is not None for item in entry['data']]
+    df_detalhes = pd.DataFrame(all_detalhes)
     
     # Processamento dos dados
     df_historico['numeroos'] = df_historico['numeroos'].astype(int)
-    if not df_detalhes.empty:
-        df_detalhes.dropna(subset=['numeroos'], inplace=True)
-        df_detalhes['numeroos'] = df_detalhes['numeroos'].astype(int)
-        for col in ['quantidade', 'valorunit', 'valortotal']:
-            if col in df_detalhes.columns:
-                df_detalhes[col] = pd.to_numeric(df_detalhes[col], errors='coerce')
-        df_detalhes.fillna(0, inplace=True)
-        detalhes_agg = df_detalhes.groupby('numeroos').agg(valortotal=('valortotal', 'sum')).reset_index()
-    else:
-        detalhes_agg = pd.DataFrame(columns=['numeroos', 'valortotal'])
+    df_detalhes.dropna(subset=['numeroos'], inplace=True)
+    df_detalhes['numeroos'] = df_detalhes['numeroos'].astype(int)
+    for col in ['quantidade', 'valorunit', 'valortotal']:
+        df_detalhes[col] = pd.to_numeric(df_detalhes[col], errors='coerce')
+    df_detalhes.fillna(0, inplace=True)
+    detalhes_agg = df_detalhes.groupby('numeroos').agg(valortotal=('valortotal', 'sum')).reset_index()
     df_merged = pd.merge(df_historico, detalhes_agg, on='numeroos', how='left')
     df_merged['valortotal'].fillna(0, inplace=True)
     for col in ['datahoraos', 'datahorainicio', 'datahorafim']:
@@ -260,20 +220,18 @@ def load_data_from_session():
 # NOVA FUNÇÃO: Carrega apenas dados do histórico (para página OS em Andamento)
 @st.cache_data
 def load_historico_only():
-    """Carrega os dados do histórico do session_state ou do banco (fallback)."""
-    if st.session_state.api_data:
-        data_list = st.session_state.api_data["data"]
-    else:
-        try:
-            data_list = database.buscar_os_para_dashboard()
-        except Exception:
-            return None
-        if not data_list:
-            return None
-    df_historico = pd.DataFrame(data_list)
+    """Carrega apenas os dados do histórico do session_state."""
+    if not st.session_state.api_data:
+        return None
+    
+    # Processa dados do histórico
+    df_historico = pd.DataFrame(st.session_state.api_data['data'])
+    
+    # Processamento básico dos dados
     df_historico['numeroos'] = df_historico['numeroos'].astype(int)
     for col in ['datahoraos', 'datahorainicio', 'datahorafim']:
         df_historico[col] = pd.to_datetime(df_historico[col], errors='coerce')
+    
     return df_historico
 
 def classify_os_status(row):
@@ -345,22 +303,21 @@ def render_dashboard_page():
 
     with col2_sidebar:
         if st.button("Limpar Filtros"):
-            keys_to_keep = ['config', 'scheduler_running', 'scheduler_thread', 'last_update', 'update_log', 'next_update_time', 'api_data', 'api_details', 'auto_init_done']
+            keys_to_keep = ['config', 'scheduler_running', 'scheduler_thread', 'last_update', 'update_log', 'next_update_time', 'api_data', 'api_details']
             for key in list(st.session_state.keys()):
                 if key not in keys_to_keep: del st.session_state[key]
             st.rerun()
 
-    # Carrega dados (session_state ou banco); só exibe aviso se não houver nenhum dado
-    try:
-        df, df_detalhes = load_data_from_session()
-        if df is None:
-            st.warning("Nenhum dado carregado. Clique em 'Atualizar Dados' para buscar informações da API ou aguarde o agendador.")
-            return
-    except Exception:
+    # Verifica se há dados carregados
+    if not st.session_state.api_data or not st.session_state.api_details:
         st.warning("Nenhum dado carregado. Clique em 'Atualizar Dados' para buscar informações da API.")
         return
 
     try:
+        df, df_detalhes = load_data_from_session()
+        if df is None:
+            st.error("Erro ao processar os dados da API.")
+            return
             
         df['Situação da OS'] = df.apply(classify_os_status, axis=1)
         
@@ -698,13 +655,17 @@ def render_andamento_page():
                     st.success("Histórico atualizado com sucesso!")
                     st.rerun()
 
-    # Carrega dados do histórico (session_state ou banco); exibe aviso só se não houver nenhum dado
-    df = load_historico_only()
-    if df is None:
-        st.warning("Nenhum dado carregado. Clique em 'Atualizar Dados' para buscar informações da API ou aguarde o agendador.")
+    # Verifica se há dados carregados
+    if not st.session_state.api_data:
+        st.warning("Nenhum dado carregado. Clique em 'Atualizar Dados' para buscar informações da API.")
         return
 
     try:
+        # USA A NOVA FUNÇÃO QUE SÓ CARREGA HISTÓRICO
+        df = load_historico_only()
+        if df is None:
+            st.error("Erro ao processar os dados da API.")
+            return
             
         # Adiciona situação das OS (sem usar valortotal dos detalhes)
         df['Situação da OS'] = df.apply(classify_os_status, axis=1)
@@ -715,7 +676,7 @@ def render_andamento_page():
         col1_sidebar_and, col2_sidebar_and = st.sidebar.columns(2)
         with col2_sidebar_and:
             if st.button("Limpar Filtros", key="limpar_filtros_andamento"):
-                keys_to_keep = ['config', 'scheduler_running', 'scheduler_thread', 'last_update', 'update_log', 'next_update_time', 'api_data', 'api_details', 'auto_init_done']
+                keys_to_keep = ['config', 'scheduler_running', 'scheduler_thread', 'last_update', 'update_log', 'next_update_time', 'api_data', 'api_details']
                 for key in list(st.session_state.keys()):
                     if key not in keys_to_keep: del st.session_state[key]
                 st.rerun()
@@ -895,28 +856,6 @@ def render_settings_page():
 
 # --- Ponto de Entrada Principal ---
 def main():
-    # Inicialização automática: uma vez por sessão, roda "Atualizar Dados" e depois "Iniciar Agendador"
-    if not st.session_state.auto_init_done:
-        if st.session_state.config.get("login") and st.session_state.config.get("password"):
-            place = st.empty()
-            with place.container():
-                st.info("Inicializando: atualizando dados...")
-                def _log_init(msg):
-                    st.session_state["update_log"] = msg
-                success = fetch_api_data_online(st.session_state.config, log_callback=_log_init)
-            if success:
-                st.session_state.scheduler_running = True
-                thread = threading.Thread(target=scheduler_loop)
-                add_script_run_ctx(thread)
-                thread.start()
-                st.session_state.scheduler_thread = thread
-                st.cache_data.clear()
-            st.session_state.auto_init_done = True
-            place.empty()
-            st.rerun()
-        else:
-            st.session_state.auto_init_done = True  # evita ficar tentando sem login/senha
-
     # Logo na sidebar
     st.sidebar.image(LOGO_URL)
 

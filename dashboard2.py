@@ -66,6 +66,8 @@ if 'api_data' not in st.session_state:
     st.session_state.api_data = None
 if 'api_details' not in st.session_state:
     st.session_state.api_details = None
+if 'api_errors' not in st.session_state:
+    st.session_state.api_errors = []
 
 # --- Funções de Lógica de Negócio (API e Dados) ---
 def _get_token(login, password, log_callback):
@@ -145,6 +147,7 @@ def fetch_api_data_online(config, log_callback):
         return False
 
     all_details = []
+    error_list = []
     try:
         os_list = historico_data.get("data", [])
         total = len(os_list)
@@ -157,13 +160,18 @@ def fetch_api_data_online(config, log_callback):
             numeroos = os_item.get("numeroos")
             if numeroos:
                 details_url = f"https://yjlcmonbid.execute-api.us-east-1.amazonaws.com/os/V1/find/os-details/{numeroos}"
-                response = requests.get(details_url, headers=headers, timeout=15)
-                if response.status_code == 200 and response.json().get("status"):
-                    all_details.append(response.json())
+                try:
+                    response = requests.get(details_url, headers=headers, timeout=15)
+                    response.raise_for_status()
+                    if response.status_code == 200 and response.json().get("status"):
+                        all_details.append(response.json())
+                except Exception as e:
+                    error_list.append({"numeroos": numeroos, "erro": str(e)})
                 time.sleep(0.05)
         
         # Armazena detalhes no session_state
         st.session_state.api_details = all_details
+        st.session_state.api_errors = error_list
         log_callback(f"Atualização completa! {len(all_details)} detalhes carregados.")
         st.session_state.last_update = time.strftime('%d/%m/%Y %H:%M:%S')
         
@@ -303,7 +311,7 @@ def render_dashboard_page():
 
     with col2_sidebar:
         if st.button("Limpar Filtros"):
-            keys_to_keep = ['config', 'scheduler_running', 'scheduler_thread', 'last_update', 'update_log', 'next_update_time', 'api_data', 'api_details']
+            keys_to_keep = ['config', 'scheduler_running', 'scheduler_thread', 'last_update', 'update_log', 'next_update_time', 'api_data', 'api_details', 'api_errors']
             for key in list(st.session_state.keys()):
                 if key not in keys_to_keep: del st.session_state[key]
             st.rerun()
@@ -676,7 +684,7 @@ def render_andamento_page():
         col1_sidebar_and, col2_sidebar_and = st.sidebar.columns(2)
         with col2_sidebar_and:
             if st.button("Limpar Filtros", key="limpar_filtros_andamento"):
-                keys_to_keep = ['config', 'scheduler_running', 'scheduler_thread', 'last_update', 'update_log', 'next_update_time', 'api_data', 'api_details']
+                keys_to_keep = ['config', 'scheduler_running', 'scheduler_thread', 'last_update', 'update_log', 'next_update_time', 'api_data', 'api_details', 'api_errors']
                 for key in list(st.session_state.keys()):
                     if key not in keys_to_keep: del st.session_state[key]
                 st.rerun()
@@ -858,6 +866,13 @@ def render_settings_page():
 def main():
     # Logo na sidebar
     st.sidebar.image(LOGO_URL)
+    
+    # Log de erros na sidebar
+    if st.session_state.get('api_errors'):
+        with st.sidebar.expander("⚠️ Log de Erros OS", expanded=False):
+            st.warning(f"{len(st.session_state.api_errors)} OS com erro ao carregar detalhes")
+            for erro in st.session_state.api_errors:
+                st.write(f"**OS {erro['numeroos']}**: {erro['erro']}")
 
     # Usando st.Page corretamente
     dashboard_page = st.Page(render_dashboard_page, title="Dashboard", icon="📊")

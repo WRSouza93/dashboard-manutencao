@@ -208,19 +208,30 @@ def load_data_from_session():
     df_historico = pd.DataFrame(st.session_state.api_data['data'])
     
     # Processa dados dos detalhes
-    all_detalhes = [item for entry in st.session_state.api_details if entry.get('data') and entry['data'][0] is not None for item in entry['data']]
+    all_detalhes = []
+    for entry in st.session_state.api_details:
+        data_field = entry.get('data')
+        if isinstance(data_field, list) and len(data_field) > 0 and data_field[0] is not None:
+            all_detalhes.extend(data_field)
+            
     df_detalhes = pd.DataFrame(all_detalhes)
     
     # Processamento dos dados
     df_historico['numeroos'] = df_historico['numeroos'].astype(int)
-    df_detalhes.dropna(subset=['numeroos'], inplace=True)
-    df_detalhes['numeroos'] = df_detalhes['numeroos'].astype(int)
-    for col in ['quantidade', 'valorunit', 'valortotal']:
-        df_detalhes[col] = pd.to_numeric(df_detalhes[col], errors='coerce')
-    df_detalhes.fillna(0, inplace=True)
-    detalhes_agg = df_detalhes.groupby('numeroos').agg(valortotal=('valortotal', 'sum')).reset_index()
+    
+    if not df_detalhes.empty:
+        df_detalhes.dropna(subset=['numeroos'], inplace=True)
+        df_detalhes['numeroos'] = df_detalhes['numeroos'].astype(int)
+        for col in ['quantidade', 'valorunit', 'valortotal']:
+            if col in df_detalhes.columns:
+                df_detalhes[col] = pd.to_numeric(df_detalhes[col], errors='coerce').fillna(0)
+                
+        detalhes_agg = df_detalhes.groupby('numeroos').agg(valortotal=('valortotal', 'sum')).reset_index()
+    else:
+        detalhes_agg = pd.DataFrame({'numeroos': pd.Series(dtype='int'), 'valortotal': pd.Series(dtype='float')})
+
     df_merged = pd.merge(df_historico, detalhes_agg, on='numeroos', how='left')
-    df_merged['valortotal'].fillna(0, inplace=True)
+    df_merged['valortotal'] = df_merged['valortotal'].fillna(0)
     for col in ['datahoraos', 'datahorainicio', 'datahorafim']:
         df_merged[col] = pd.to_datetime(df_merged[col], errors='coerce')
     return df_merged, df_detalhes
